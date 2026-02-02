@@ -2,23 +2,21 @@ const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Rout
 const cron = require('node-cron');
 const http = require('http');
 
-// ===== ダミーHTTPサーバー（Render用） =====
+// ===== 最初にHTTPサーバーを起動（Render用） =====
 const PORT = process.env.PORT || 3000;
 
-const server = http.createServer((req, res) => {
+http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ 
     status: 'ok', 
     bot: '嘉瀬川ダム監視Bot',
     uptime: process.uptime()
   }));
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 Server listening on port ${PORT}`);
 });
 
-server.listen(PORT, () => {
-  console.log(`🌐 Health check server running on port ${PORT}`);
-});
-
-// ===== 以下、元のコード =====
+// ===== 設定 =====
 
 const CONFIG = {
   GAS_API_URL: process.env.GAS_API_URL,
