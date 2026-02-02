@@ -1,0 +1,25 @@
+{
+  "name": "kasegawa-dam-bot",
+  "version": "1.0.0",
+  "description": "嘉瀬川ダム貯水率監視Bot - ボート部の桟橋が干上がらないように監視",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "dam",
+    "monitoring"
+  ],
+  "author": "",
+  "license": "MIT"
+}
