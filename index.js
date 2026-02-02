@@ -1,7 +1,25 @@
 const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes } = require('discord.js');
 const cron = require('node-cron');
+const http = require('http');
 
-// 設定
+// ===== ダミーHTTPサーバー（Render用） =====
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ 
+    status: 'ok', 
+    bot: '嘉瀬川ダム監視Bot',
+    uptime: process.uptime()
+  }));
+});
+
+server.listen(PORT, () => {
+  console.log(`🌐 Health check server running on port ${PORT}`);
+});
+
+// ===== 以下、元のコード =====
+
 const CONFIG = {
   GAS_API_URL: process.env.GAS_API_URL,
   DISCORD_TOKEN: process.env.DISCORD_TOKEN,
@@ -14,18 +32,17 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-// セッション管理
 let boatSession = null;
 
 // ===== カラーパレット =====
 const COLORS = {
-  PRIMARY: 0x3498DB,    // 青
-  SUCCESS: 0x2ECC71,    // 緑
-  WARNING: 0xF39C12,    // オレンジ
-  DANGER: 0xE74C3C,     // 赤
-  INFO: 0x9B59B6,       // 紫
-  DARK: 0x2C3E50,       // ダークブルー
-  WATER: 0x00CED1       // ターコイズ
+  PRIMARY: 0x3498DB,
+  SUCCESS: 0x2ECC71,
+  WARNING: 0xF39C12,
+  DANGER: 0xE74C3C,
+  INFO: 0x9B59B6,
+  DARK: 0x2C3E50,
+  WATER: 0x00CED1
 };
 
 // ===== スラッシュコマンド定義 =====
@@ -136,7 +153,7 @@ async function handleStartCommand(interaction) {
   const embed = new EmbedBuilder()
     .setColor(isReset ? COLORS.WARNING : COLORS.WATER)
     .setAuthor({ 
-      name: isReset ? '🔄 監視���セット' : '🚣 乗艇開始',
+      name: isReset ? '🔄 監視リセット' : '🚣 乗艇開始',
       iconURL: userAvatar
     })
     .setTitle('嘉瀬川ダム監視システム')
@@ -223,7 +240,6 @@ async function handleStatusCommand(interaction) {
   const progress = Math.min(100, Math.max(0, (Math.abs(change) / CONFIG.ALERT_DECREASE) * 100));
   const duration = formatDuration(Date.now() - new Date(boatSession.startTime).getTime());
   
-  // 状態に応じた色とステータス
   let color, statusIcon, statusText;
   
   if (boatSession.notified || remaining <= 0) {
@@ -378,7 +394,6 @@ async function handleNowCommand(interaction) {
     )
     .setTimestamp();
   
-  // 監視中の場合は追加情報
   if (boatSession) {
     const change = current.rate - boatSession.startRate;
     const remaining = current.rate - (boatSession.startRate - CONFIG.ALERT_DECREASE);
@@ -450,7 +465,7 @@ function getRateColor(rate) {
   if (rate >= 70) return COLORS.SUCCESS;
   if (rate >= 50) return COLORS.WARNING;
   if (rate >= 30) return COLORS.DANGER;
-  return 0x8B0000; // ダークレッド
+  return 0x8B0000;
 }
 
 function getRateEmoji(rate) {
@@ -463,11 +478,7 @@ function getRateEmoji(rate) {
 function formatDuration(ms) {
   const hours = Math.floor(ms / (1000 * 60 * 60));
   const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
-  
-  if (hours > 0) {
-    return `${hours}時間 ${minutes}分`;
-  }
-  return `${minutes}分`;
+  return hours > 0 ? `${hours}時間 ${minutes}分` : `${minutes}分`;
 }
 
 function createProgressBar(percent) {
@@ -476,8 +487,6 @@ function createProgressBar(percent) {
   const empty = total - filled;
   
   let bar = '';
-  
-  // 色付きのバー
   if (percent < 50) {
     bar = '🟩'.repeat(filled) + '⬜'.repeat(empty);
   } else if (percent < 80) {
