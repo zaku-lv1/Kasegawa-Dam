@@ -28,6 +28,9 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
+client.login(CONFIG.DISCORD_TOKEN).catch(err => {
+  console.error('❌ ログイン失敗:', err.message);
+});
 
 const COLORS = {
   PRIMARY: 0x3498DB, SUCCESS: 0x2ECC71, WARNING: 0xF39C12,
@@ -182,6 +185,4 @@ client.once('ready', async () => {
   } catch (e) { console.error('❌ コマンド登録失敗:', e); }
 });
 
-client.login(CONFIG.DISCORD_TOKEN).catch(err => {
-  console.error('❌ ログイン失敗:', err.message);
-});
+
