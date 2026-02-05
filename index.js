@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 10000; // Renderのデフォルト10000に対�
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'active' }));
-}).listen(PORT, '0.0.0.0', () => {
+}).listen(PORT, () => {
   console.log(`🌐 Webサーバー起動完了 (Port: ${PORT})`);
 });
 
@@ -28,8 +28,10 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
+console.log("🤖 login直前 TOKEN exists:", !!CONFIG.DISCORD_TOKEN);
+
 client.login(CONFIG.DISCORD_TOKEN).catch(err => {
-  console.error('❌ ログイン失敗:', err.message);
+  console.error('❌ ログイン失敗:', err);
 });
 
 const COLORS = {
