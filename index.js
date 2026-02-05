@@ -2,18 +2,28 @@ const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Rout
 const cron = require('node-cron');
 const http = require('http');
 
-// ===== 重要なエラーハンドリング =====
-process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err));
-process.on('unhandledRejection', (reason, promise) => console.error('Unhandled Rejection:', reason));
+// ===== 1. エラーハンドリング (プロセス停止防止) =====
+process.on('uncaughtException', (err) => {
+    console.error('❌ 未処理の例外:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ 未処理の拒否:', reason);
+});
 
-// ===== HTTPサーバー (Uptime用) =====
+// ===== 2. HTTPサーバー (Renderのスリープ防止 / UptimeRobot用) =====
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'ok', bot: '嘉瀬川ダム監視Bot', uptime: process.uptime() }));
-}).listen(PORT, '0.0.0.0', () => console.log(`🌐 Server listening on port ${PORT}`));
+  res.end(JSON.stringify({ 
+    status: 'ok', 
+    bot: '嘉瀬川ダム監視Bot',
+    uptime: process.uptime() 
+  }));
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 サーバーがポート ${PORT} で待機中...`);
+});
 
-// ===== 設定 =====
+// ===== 3. 設定確認 =====
 const CONFIG = {
   GAS_API_URL: process.env.GAS_API_URL,
   DISCORD_TOKEN: process.env.DISCORD_TOKEN,
@@ -22,235 +32,243 @@ const CONFIG = {
   ALERT_DECREASE: 4.0
 };
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-
-// ★変更点: ローカル変数はあくまでキャッシュとして使い、常にGASと同期する意識を持つ
-let localSessionCache = null;
-
-// ===== カラーパレット =====
-const COLORS = {
-  PRIMARY: 0x3498DB, SUCCESS: 0x2ECC71, WARNING: 0xF39C12,
-  DANGER: 0xE74C3C, WATER: 0x00CED1
-};
-
-// ===== スラッシュコマンド定義 =====
-const commands = [
-  new SlashCommandBuilder().setName('dam').setDescription('嘉瀬川ダム情報')
-    .addSubcommand(sub => sub.setName('start').setDescription('🚣 監視スタート（GASに保存）'))
-    .addSubcommand(sub => sub.setName('status').setDescription('📊 監視状態を確認'))
-    .addSubcommand(sub => sub.setName('now').setDescription('💧 現在の貯水率'))
-    .addSubcommand(sub => sub.setName('help').setDescription('❓ ヘルプ'))
-].map(cmd => cmd.toJSON());
-
-// ===== コマンド登録 =====
-async function registerCommands() {
-  const rest = new REST({ version: '10' }).setToken(CONFIG.DISCORD_TOKEN);
-  try {
-    await rest.put(Routes.applicationCommands(CONFIG.CLIENT_ID), { body: commands });
-    console.log('✅ コマンド登録完了');
-  } catch (error) { console.error('コマンド登録エラー:', error); }
+// 必須項目のチェック
+if (!CONFIG.DISCORD_TOKEN || !CONFIG.GAS_API_URL) {
+  console.error("❌ 環境変数が不足しています。RENDERの設定を確認してください。");
 }
 
-// ===== GAS API (タイムアウト付き) =====
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+const COLORS = {
+  PRIMARY: 0x3498DB,
+  SUCCESS: 0x2ECC71,
+  WARNING: 0xF39C12,
+  DANGER: 0xE74C3C,
+  INFO: 0x9B59B6,
+  DARK: 0x2C3E50,
+  WATER: 0x00CED1
+};
+
+// ===== 4. スラッシュコマンド定義 =====
+const commands = [
+  new SlashCommandBuilder()
+    .setName('dam')
+    .setDescription('嘉瀬川ダム監視コマンド')
+    .addSubcommand(sub => 
+      sub.setName('start').setDescription('🚣 乗艇開始！監視をスタート（GASに状態を保存）')
+    )
+    .addSubcommand(sub => 
+      sub.setName('status').setDescription('📊 監視状態を確認（再起動後もGASから復元）')
+    )
+    .addSubcommand(sub => 
+      sub.setName('now').setDescription('💧 現在の貯水率を表示')
+    )
+    .addSubcommand(sub => 
+      sub.setName('help').setDescription('❓ ヘルプを表示')
+    )
+].map(cmd => cmd.toJSON());
+
+// ===== 5. GAS API 連携共通関数 =====
 async function callGasApi(action, params = {}) {
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒待ち
-    
-    // クエリパラメータの構築
     const url = new URL(CONFIG.GAS_API_URL);
     url.searchParams.append('action', action);
     Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
 
-    const response = await fetch(url, { signal: controller.signal });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒でタイムアウト
+
+    const response = await fetch(url.toString(), { signal: controller.signal });
     clearTimeout(timeoutId);
 
-    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+    if (!response.ok) throw new Error(`HTTPエラー: ${response.status}`);
     return await response.json();
   } catch (error) {
-    console.error(`API Error (${action}):`, error.message);
+    console.error(`❌ GAS API通信エラー (${action}):`, error.message);
     return { success: false, error: error.message };
   }
 }
 
-// ===== コマンド処理 =====
+// ===== 6. インタラクション処理 (3秒ルール完全対策) =====
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   if (interaction.commandName !== 'dam') return;
 
+  // 【重要】即座に応答を予約。これで「インタラクションに失敗しました」を防ぐ
+  try {
+    await interaction.deferReply();
+  } catch (e) {
+    console.error("deferReply失敗:", e);
+    return;
+  }
+
   const subcommand = interaction.options.getSubcommand();
 
   try {
-    if (subcommand === 'start') await handleStartCommand(interaction);
-    else if (subcommand === 'status') await handleStatusCommand(interaction);
-    else if (subcommand === 'now') await handleNowCommand(interaction);
-    else if (subcommand === 'help') await handleHelpCommand(interaction);
-  } catch (e) {
-    console.error(e);
-    const msg = { content: 'エラーが発生しました', ephemeral: true };
-    if (interaction.replied || interaction.deferred) await interaction.editReply(msg);
-    else await interaction.reply(msg);
+    switch (subcommand) {
+      case 'start':
+        await handleStartCommand(interaction);
+        break;
+      case 'status':
+        await handleStatusCommand(interaction);
+        break;
+      case 'now':
+        await handleNowCommand(interaction);
+        break;
+      case 'help':
+        await handleHelpCommand(interaction);
+        break;
+    }
+  } catch (error) {
+    console.error('コマンド実行中エラー:', error);
+    await interaction.editReply('⚠️ 内部エラーが発生しました。');
   }
 });
 
-// ===== /dam start =====
+// --- コマンド実行関数群 ---
+
 async function handleStartCommand(interaction) {
-  await interaction.deferReply();
-  
-  // GASの start アクションを叩く（GAS側でsessionが保存される）
   const data = await callGasApi('start', { username: interaction.user.username });
   
   if (!data.success) {
-    await interaction.editReply({ content: `❌ エラー: ${data.error}` });
-    return;
+    return interaction.editReply(`❌ 監視の開始に失敗しました: ${data.error}`);
   }
 
-  // ローカルキャッシュを更新
-  localSessionCache = data.session;
-  
-  const currentRate = data.current.rate;
-  const targetRate = (currentRate - CONFIG.ALERT_DECREASE).toFixed(1);
-  const isReset = data.isReset;
+  const cur = data.current;
+  const targetRate = (cur.rate - CONFIG.ALERT_DECREASE).toFixed(1);
 
   const embed = new EmbedBuilder()
-    .setColor(isReset ? COLORS.WARNING : COLORS.WATER)
-    .setTitle(isReset ? '🔄 監視リセット' : '🚣 乗艇開始')
-    .setDescription(`GASにセッションを保存しました。\n現在の貯水率: **${currentRate}%**\n通知ライン: **${targetRate}%**`)
-    .setFooter({ text: `実行者: ${interaction.user.username}` });
+    .setColor(data.isReset ? COLORS.WARNING : COLORS.WATER)
+    .setTitle(data.isReset ? '🔄 監視リセット' : '🚣 監視開始')
+    .setDescription(data.isReset ? '既存の監視をリセットし、再開しました。' : '本日の監視を開始しました。')
+    .addFields(
+      { name: '基準貯水率', value: `\`${cur.rate}%\``, inline: true },
+      { name: '通知ライン', value: `\`${targetRate}%\``, inline: true },
+      { name: '許容減少量', value: `\`-${CONFIG.ALERT_DECREASE}%\``, inline: true }
+    )
+    .setFooter({ text: `実行者: ${interaction.user.username}` })
+    .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
 }
 
-// ===== /dam status =====
 async function handleStatusCommand(interaction) {
-  await interaction.deferReply();
-
-  // ★重要: 表示する前にGASから最新のセッション情報を取る
-  const sessionData = await callGasApi('session');
-  const statusData = await callGasApi('status');
+  // セッションと現在の状況を両方取得
+  const [sessionData, statusData] = await Promise.all([
+    callGasApi('session'),
+    callGasApi('status')
+  ]);
 
   if (!sessionData.success || !sessionData.session) {
-    await interaction.editReply({ content: '現在、監視セッションは開始されていません。\n`/dam start` で開始してください。' });
-    return;
-  }
-  if (!statusData.success) {
-    await interaction.editReply({ content: '現在のダム情報の取得に失敗しました。' });
-    return;
+    return interaction.editReply('📊 アクティブな監視はありません。`/dam start` で開始してください。');
   }
 
-  localSessionCache = sessionData.session; // キャッシュ更新
   const session = sessionData.session;
-  const currentRate = statusData.current.rate;
-  
-  const decrease = session.startRate - currentRate;
-  const remaining = currentRate - (session.startRate - CONFIG.ALERT_DECREASE);
+  const cur = statusData.current;
+  const decrease = (session.startRate - cur.rate).toFixed(1);
+  const remaining = (cur.rate - (session.startRate - CONFIG.ALERT_DECREASE)).toFixed(1);
 
   const embed = new EmbedBuilder()
-    .setColor(COLORS.INFO)
+    .setColor(remaining <= 0 ? COLORS.DANGER : COLORS.SUCCESS)
     .setTitle('📊 監視ステータス')
     .addFields(
-      { name: '開始時', value: `${session.startRate}%`, inline: true },
-      { name: '現在', value: `${currentRate}%`, inline: true },
-      { name: '変動', value: `${decrease > 0 ? '-' : '+'}${Math.abs(decrease).toFixed(1)}%`, inline: true },
-      { name: '通知まで', value: remaining > 0 ? `あと ${remaining.toFixed(1)}%` : '🚨 通知圏内', inline: true }
+      { name: '開始時', value: `\`${session.startRate}%\``, inline: true },
+      { name: '現在', value: `\`${cur.rate}%\``, inline: true },
+      { name: '変動', value: `\`${decrease > 0 ? '-' : '+'}${Math.abs(decrease)}%\``, inline: true },
+      { name: '通知まで', value: remaining > 0 ? `あと \`${remaining}%\`` : '🚨 通知ライン到達', inline: false }
     )
-    .setFooter({ text: `開始日時: ${new Date(session.startTime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}` });
+    .setFooter({ text: `開始者: ${session.startedBy}` })
+    .setTimestamp();
 
   await interaction.editReply({ embeds: [embed] });
 }
 
-// ===== /dam now =====
 async function handleNowCommand(interaction) {
-  await interaction.deferReply();
   const data = await callGasApi('status');
-  if (!data.success) {
-    await interaction.editReply('データの取得に失敗しました。');
-    return;
-  }
-  
-  const current = data.current;
+  if (!data.success) return interaction.editReply('❌ データの取得に失敗しました。');
+
+  const cur = data.current;
   const embed = new EmbedBuilder()
-    .setColor(current.rate >= 50 ? COLORS.SUCCESS : COLORS.WARNING)
-    .setTitle('💧 現在の嘉瀬川ダム')
-    .setDescription(`貯水率: **${current.rate}%**\n流入: ${current.inflow} m³/s\n放流: ${current.outflow} m³/s`)
-    .setFooter({ text: `観測: ${current.datetime}` });
+    .setColor(COLORS.PRIMARY)
+    .setTitle('🌊 嘉瀬川ダム 現在の状況')
+    .addFields(
+      { name: '貯水率', value: `\`${cur.rate}%\``, inline: true },
+      { name: '貯水量', value: `\`${cur.volume.toLocaleString()} 千m³\``, inline: true },
+      { name: '流入量', value: `\`+${cur.inflow} m³/s\``, inline: true },
+      { name: '放流量', value: `\`-${cur.outflow} m³/s\``, inline: true }
+    )
+    .setFooter({ text: `観測日時: ${cur.datetime}` });
 
   await interaction.editReply({ embeds: [embed] });
 }
 
-// ===== /dam help (簡易版) =====
 async function handleHelpCommand(interaction) {
-  await interaction.reply({ 
-    content: '**嘉瀬川ダム監視Bot**\n`/dam start` : 監視開始\n`/dam status` : 状態確認\n`/dam now` : 今の水位',
-    ephemeral: true 
-  });
+  const embed = new EmbedBuilder()
+    .setColor(COLORS.DARK)
+    .setTitle('❓ 使い方ヘルプ')
+    .setDescription('ボート部の活動を支えるダム監視Botです。')
+    .addFields(
+      { name: '`/dam start`', value: '乗艇時の水位を基準として記録し、監視を始めます。' },
+      { name: '`/dam status`', value: '開始時からの水位の変化と、通知までの残りを確認します。' },
+      { name: '`/dam now`', value: '現在のダムの貯水率と流量をリアルタイム表示します。' }
+    )
+    .setFooter({ text: '※30分ごとに自動チェックし、4%低下で@everyone通知します。' });
+
+  await interaction.editReply({ embeds: [embed] });
 }
 
-// ===== 自動監視（Cron） =====
+// ===== 7. 自動監視タスク (30分ごと) =====
 cron.schedule('*/30 * * * *', async () => {
-  console.log('[Cron] Checking status...');
-
-  // 1. GASからセッション情報を取得（Renderが再起動していてもこれで復活する）
-  const sessionData = await callGasApi('session');
-  if (!sessionData.success || !sessionData.session) {
-    console.log('[Cron] No active session.');
-    localSessionCache = null;
-    return;
-  }
+  console.log('[定期監視] 実行中...');
   
-  const session = sessionData.session;
-  localSessionCache = session; // キャッシュ更新
-
-  // 既に通知済みなら何もしない
-  if (session.notified) {
-    console.log('[Cron] Already notified.');
-    return;
+  // GASからセッション取得（Renderが再起動していてもGASから復元される）
+  const sessionData = await callGasApi('session');
+  if (!sessionData.success || !sessionData.session || sessionData.session.notified) {
+    return; // セッションなし、または通知済みなら終了
   }
 
-  // 2. 現在のダム情報を取得
   const statusData = await callGasApi('status');
-  if (!statusData.success) {
-    console.error('[Cron] Failed to fetch dam status.');
-    return;
-  }
+  if (!statusData.success) return;
 
-  const currentRate = statusData.current.rate;
-  const decrease = session.startRate - currentRate;
+  const session = sessionData.session;
+  const cur = statusData.current;
+  const decrease = session.startRate - cur.rate;
 
-  // 3. 判定ロジック
   if (decrease >= CONFIG.ALERT_DECREASE) {
     const channel = client.channels.cache.get(CONFIG.CHANNEL_ID);
-    if (channel) {
-      const embed = new EmbedBuilder()
-        .setColor(COLORS.DANGER)
-        .setTitle('🚨 貯水率低下アラート')
-        .setDescription(`基準値より **${decrease.toFixed(1)}%** 低下しました！\n桟橋の位置を確認してください。`)
-        .addFields(
-            { name: '開始時', value: `${session.startRate}%`, inline: true },
-            { name: '現在', value: `${currentRate}%`, inline: true }
-        );
+    if (!channel) return;
 
-      await channel.send({ content: '@everyone', embeds: [embed] });
-      
-      // 4. GASに「通知済み」状態を保存（再通知を防ぐ）
-      await callGasApi('notify');
-      console.log('🚨 Alert sent and saved to GAS.');
-    }
-  } else {
-    console.log(`[Cron] Safe. Decrease: ${decrease.toFixed(1)}%`);
+    const embed = new EmbedBuilder()
+      .setColor(COLORS.DANGER)
+      .setTitle('🚨 貯水率低下アラート')
+      .setDescription(`基準値(${session.startRate}%)から **${decrease.toFixed(1)}%** 低下しました。\n桟橋の状態を確認してください。`)
+      .setTimestamp();
+
+    await channel.send({ 
+        content: `@everyone 🚨 **貯水率が${CONFIG.ALERT_DECREASE}%以上減少しました！**`, 
+        embeds: [embed] 
+    });
+    
+    // GAS側を通知済みに更新
+    await callGasApi('notify');
+    console.log('🚨 アラートを送信し、GASの状態を更新しました。');
   }
 }, { timezone: 'Asia/Tokyo' });
 
+// ===== 8. 起動処理 =====
+async function registerCommands() {
+  const rest = new REST({ version: '10' }).setToken(CONFIG.DISCORD_TOKEN);
+  try {
+    console.log('🔄 スラッシュコマンドを同期中...');
+    await rest.put(Routes.applicationCommands(CONFIG.CLIENT_ID), { body: commands });
+    console.log('✅ スラッシュコマンド同期完了');
+  } catch (e) {
+    console.error('❌ コマンド登録エラー:', e);
+  }
+}
 
-// ===== 起動処理 =====
 client.once('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  // 起動時に現在のセッション状態をチェック（ログ用）
-  const sessionCheck = await callGasApi('session');
-  if (sessionCheck.success && sessionCheck.session) {
-    console.log('🔄 既存のセッションを復元しました:', sessionCheck.session);
-    localSessionCache = sessionCheck.session;
-  }
   await registerCommands();
 });
 
