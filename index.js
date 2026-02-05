@@ -1,6 +1,16 @@
 const { Client, GatewayIntentBits, EmbedBuilder, SlashCommandBuilder, REST, Routes } = require('discord.js');
 const cron = require('node-cron');
 const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const http = require('http');
+
+// ===== HTTPサーバー（Render用） =====
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`🌐 Server listening on port ${PORT}`);
+});
 
 // ===== 設定 =====
 const CONFIG = {
