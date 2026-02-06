@@ -32,7 +32,7 @@ const client = new Client({
 console.log("🤖 login直前 TOKEN exists:", !!CONFIG.DISCORD_TOKEN);
 
 console.log("🚨 ABOUT TO LOGIN DISCORD");
-
+console.log("login呼び出し前:", process.env.DISCORD_TOKEN); // ここで値を必ず確認
 client.login(process.env.DISCORD_TOKEN)
   .then(() => {
     console.log("🚀 client.login() resolved");
