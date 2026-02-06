@@ -1,7 +1,6 @@
 {
   "name": "kasegawa-dam-bot",
   "version": "1.0.0",
-  "type": "module",
   "description": "嘉瀬川ダム貯水率監視Bot - ボート部の桟橋が干上がらないように監視",
   "main": "index.js",
   "scripts": {
