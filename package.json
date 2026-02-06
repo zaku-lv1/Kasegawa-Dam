@@ -1,18 +1,19 @@
 {
   "name": "kasegawa-dam-bot",
   "version": "1.0.0",
+  "type": "module",
   "description": "嘉瀬川ダム貯水率監視Bot - ボート部の桟橋が干上がらないように監視",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js"
   },
-"dependencies": {
-  "discord.js": "^14.14.1",
-  "node-cron": "^3.0.3",
-  "node-fetch": "^3.3.2",
-  "express": "^4.19.2"
-},
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^3.3.2",
+    "express": "^4.19.2"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
