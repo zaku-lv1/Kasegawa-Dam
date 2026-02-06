@@ -93,20 +93,38 @@ const commands = [
     .addSubcommand(sub => sub.setName('help').setDescription('❓ 使い方を表示'))
 ].map(cmd => cmd.toJSON());
 
-// ===== 6. インタラクション処理 =====
+// ===== 6. インタラクション処理 (強化版) =====
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand() || interaction.commandName !== 'dam') return;
 
+  // 1. まず、最速で deferReply を実行 (3秒ルール対策)
   try {
-    await interaction.deferReply(); // ここで3秒タイムアウトを回避
-  } catch (e) { return; }
+    await interaction.deferReply();
+  } catch (e) {
+    console.error("deferReply 失敗:", e);
+    return;
+  }
 
   const subcommand = interaction.options.getSubcommand();
 
   try {
+    // 2. タイムアウト付きでGASを呼び出すヘルパー (GASが重すぎる場合用)
+    const fetchWithTimeout = async (action, params, timeout = 25000) => {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeout);
+      try {
+        const res = await callGasApi(action, params, controller.signal);
+        clearTimeout(id);
+        return res;
+      } catch (err) {
+        clearTimeout(id);
+        throw err;
+      }
+    };
+
     if (subcommand === 'start') {
-      const data = await callGasApi('start', { username: interaction.user.username });
-      if (!data.success) return await interaction.editReply('❌ GAS通信に失敗しました。');
+      const data = await fetchWithTimeout('start', { username: interaction.user.username });
+      if (!data.success) throw new Error('GASからの応答が異常です');
 
       const cur = data.current;
       const targetRate = (cur.rate - CONFIG.ALERT_DECREASE).toFixed(1);
@@ -119,20 +137,27 @@ client.on('interactionCreate', async (interaction) => {
           { name: '通知ライン', value: `\`\`\`fix\n${targetRate}%\n\`\`\``, inline: true },
           { name: '━━━━━━━━━━ 📊 進捗 ━━━━━━━━━━', value: createProgressBar(0) }
         ).setFooter({ text: `実行者: ${interaction.user.username}` }).setTimestamp();
+      
       await interaction.editReply({ embeds: [embed] });
 
     } else if (subcommand === 'status') {
-      const [sData, stData] = await Promise.all([callGasApi('session'), callGasApi('status')]);
-      if (!sData.success || !sData.session) return await interaction.editReply('📊 監視が開始されていません。');
+      // 複数を同時に待つ際、GASが遅いとここで詰まるので注意
+      const [sData, stData] = await Promise.all([
+        fetchWithTimeout('session'),
+        fetchWithTimeout('status')
+      ]);
+
+      if (!sData.success || !sData.session) {
+        return await interaction.editReply('📊 現在、アクティブな監視セッションはありません。`/dam start` で開始してください。');
+      }
       
       const session = sData.session;
       const cur = stData.current;
       const change = cur.rate - session.startRate;
-      const remaining = cur.rate - (session.startRate - CONFIG.ALERT_DECREASE);
       const progress = Math.min(100, Math.max(0, (Math.abs(change) / CONFIG.ALERT_DECREASE) * 100));
 
       const embed = new EmbedBuilder()
-        .setColor(remaining <= 0 ? COLORS.DANGER : COLORS.SUCCESS)
+        .setColor(cur.rate <= (session.startRate - CONFIG.ALERT_DECREASE) ? COLORS.DANGER : COLORS.SUCCESS)
         .setTitle('📊 監視ステータス')
         .addFields(
           { name: '開始時', value: `\`${session.startRate}%\``, inline: true },
@@ -140,11 +165,13 @@ client.on('interactionCreate', async (interaction) => {
           { name: '経過時間', value: `\`${formatDuration(session.startTime)}\``, inline: true },
           { name: '進捗', value: createProgressBar(progress) }
         ).setFooter({ text: `開始者: ${session.startedBy}` });
+
       await interaction.editReply({ embeds: [embed] });
 
     } else if (subcommand === 'now') {
-      const data = await callGasApi('status');
-      if (!data.success) return await interaction.editReply('❌ 取得失敗');
+      const data = await fetchWithTimeout('status');
+      if (!data.success) throw new Error('データ取得失敗');
+      
       const cur = data.current;
       const embed = new EmbedBuilder()
         .setColor(COLORS.PRIMARY).setTitle('🌊 現在の嘉瀬川ダム状況')
@@ -160,37 +187,31 @@ client.on('interactionCreate', async (interaction) => {
         .setDescription('`/dam start`: 監視開始\n`/dam status`: 状況確認\n`/dam now`: 現況表示');
       await interaction.editReply({ embeds: [embed] });
     }
+
   } catch (error) {
-    console.error(error);
+    console.error("処理エラー:", error);
+    // ユーザーにエラーを通知（すでにdeferしているのでeditReplyを使う）
+    const errorMsg = error.name === 'AbortError' 
+      ? '⌛ GASの応答がタイムアウトしました。しばらく経ってから再度お試しください。'
+      : '❌ データの取得中にエラーが発生しました。';
+    
+    await interaction.editReply({ content: errorMsg }).catch(() => null);
   }
 });
 
-// ===== 7. 定期監視 (30分毎) =====
-cron.schedule('*/30 * * * *', async () => {
-  if (!CONFIG.CHANNEL_ID) return;
-  const sData = await callGasApi('session');
-  if (!sData.success || !sData.session || sData.session.notified) return;
-
-  const stData = await callGasApi('status');
-  if (sData.session.startRate - stData.current.rate >= CONFIG.ALERT_DECREASE) {
-    const channel = await client.channels.fetch(CONFIG.CHANNEL_ID).catch(() => null);
-    if (channel) {
-      const embed = new EmbedBuilder().setColor(COLORS.DANGER).setTitle('🚨 貯水率低下！')
-        .setDescription(`基準から ${CONFIG.ALERT_DECREASE}% 以上低下しました。\n現在: ${stData.current.rate}%`);
-      await channel.send({ content: '@everyone', embeds: [embed] });
-      await callGasApi('notify');
-    }
-  }
-}, { timezone: 'Asia/Tokyo' });
-
-// ===== 8. 起動 =====
-client.once('ready', async () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
-  const rest = new REST({ version: '10' }).setToken(CONFIG.DISCORD_TOKEN);
+// callGasApiに関数引数を追加できるように修正
+async function callGasApi(action, params = {}, signal = null) {
   try {
-    await rest.put(Routes.applicationCommands(CONFIG.CLIENT_ID), { body: commands });
-    console.log('✅ コマンド登録完了');
-  } catch (e) { console.error('❌ コマンド登録失敗:', e); }
-});
-
-
+    const url = new URL(CONFIG.GAS_API_URL);
+    url.searchParams.append('action', action);
+    Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
+    
+    const response = await fetch(url.toString(), { signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    if (error.name === 'AbortError') throw error; // タイムアウト時はそのまま投げる
+    console.error(`❌ GAS通信エラー (${action}):`, error.message);
+    return { success: false, error: error.message };
+  }
+}
