@@ -19,6 +19,7 @@ const CONFIG = {
   CHANNEL_ID: process.env.CHANNEL_ID,
   ALERT_DECREASE: 4.0
 };
+console.log(CONFIG)
 
 // インテント設定 (設定した3つのスイッチに対応)
 const client = new Client({
@@ -32,7 +33,7 @@ console.log("🤖 login直前 TOKEN exists:", !!CONFIG.DISCORD_TOKEN);
 
 console.log("🚨 ABOUT TO LOGIN DISCORD");
 
-client.login(CONFIG.DISCORD_TOKEN)
+client.login(process.env.DISCORD_TOKEN)
   .then(() => {
     console.log("🚀 client.login() resolved");
   })
