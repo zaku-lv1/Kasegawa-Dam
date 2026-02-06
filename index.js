@@ -3,12 +3,33 @@ const cron = require('node-cron');
 const http = require('http');
 
 // ===== 1. Render用 Webサーバー (これが無いとRenderに落とされます) =====
-const PORT = process.env.PORT || 10000; // Renderのデフォルト10000に対応
+const PORT = process.env.PORT || 10000;
+
+// fetch polyfill（Node18未満なら必要）
+if (typeof fetch === 'undefined') {
+  global.fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+}
+
+// Webサーバー起動＆その「完了」後にBotログイン
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'active' }));
-}).listen(PORT, () => {
+}).listen(PORT, async () => {
   console.log(`🌐 Webサーバー起動完了 (Port: ${PORT})`);
+
+  // 固定: 必要な環境変数が揃っているかチェック
+  if (!CONFIG.DISCORD_TOKEN) {
+    console.error('❌ DISCORD_TOKENが未設定です。Renderの管理画面または.envで確認してください。');
+    process.exit(1);
+  }
+  try {
+    console.log("🚨 ABOUT TO LOGIN DISCORD");
+    await client.login(CONFIG.DISCORD_TOKEN);
+    console.log("🚀 client.login() resolved");
+  } catch (err) {
+    console.error('❌ ログイン失敗:', err);
+    process.exit(1);
+  }
 });
 
 // ===== 2. 設定 =====
