@@ -221,18 +221,40 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // callGasApiに関数引数を追加できるように修正
+// ===== 4. GAS API 通信 (デバッグログ強化版) =====
 async function callGasApi(action, params = {}, signal = null) {
+  const startTime = Date.now(); // 実行時間の計測用
   try {
     const url = new URL(CONFIG.GAS_API_URL);
     url.searchParams.append('action', action);
     Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
     
+    // --- ログ追加 ---
+    console.log(`📡 [${action}] GASリクエスト送信中...`);
+    console.log(`🔗 URL: ${url.origin}${url.pathname}?action=${action}`); // セキュリティのためパラメータは最小限表示
+
+    // Node.jsの標準fetchを使用
     const response = await fetch(url.toString(), { signal });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return await response.json();
+    
+    const duration = (Date.now() - startTime) / 1000;
+    console.log(`📥 [${action}] GASレスポンス受信: Status ${response.status} (${duration}秒経過)`);
+
+    if (!response.ok) {
+      throw new Error(`HTTPエラー ステータス: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log(`✅ [${action}] データ解析成功`);
+    return data;
   } catch (error) {
-    if (error.name === 'AbortError') throw error; // タイムアウト時はそのまま投げる
-    console.error(`❌ GAS通信エラー (${action}):`, error.message);
+    const duration = (Date.now() - startTime) / 1000;
+    
+    if (error.name === 'AbortError') {
+      console.error(`⚠️ [${action}] タイムアウトにより中断 (${duration}秒)`);
+      throw error;
+    }
+    
+    console.error(`❌ [${action}] GAS通信エラー (${duration}秒経過):`, error.message);
     return { success: false, error: error.message };
   }
 }
