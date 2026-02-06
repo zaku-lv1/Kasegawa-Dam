@@ -27,10 +27,9 @@ client.once("ready", () => {
   console.log(`✅ Discord logged in as ${client.user.tag}`);
 });
 
-client.login(process.env.DISCORD_TOKEN)
-  .then(() => {
-    console.log("🚀 client.login() 呼び出し完了");
-  })
-  .catch(err => {
-    console.error("❌ Discord login error:", err);
-  });
+console.log("🚨 ABOUT TO LOGIN DISCORD");
+
+client.login(CONFIG.DISCORD_TOKEN)
+  .then(() => console.log("🚀 login() resolved"))
+  .catch(e => console.error("❌ login() rejected", e));
+
