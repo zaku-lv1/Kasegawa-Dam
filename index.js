@@ -3,33 +3,12 @@ const cron = require('node-cron');
 const http = require('http');
 
 // ===== 1. Render用 Webサーバー (これが無いとRenderに落とされます) =====
-const PORT = process.env.PORT || 10000;
-
-// fetch polyfill（Node18未満なら必要）
-if (typeof fetch === 'undefined') {
-  global.fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
-}
-
-// Webサーバー起動＆その「完了」後にBotログイン
+const PORT = process.env.PORT || 10000; // Renderのデフォルト10000に対応
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'active' }));
-}).listen(PORT, async () => {
+}).listen(PORT, () => {
   console.log(`🌐 Webサーバー起動完了 (Port: ${PORT})`);
-
-  // 固定: 必要な環境変数が揃っているかチェック
-  if (!CONFIG.DISCORD_TOKEN) {
-    console.error('❌ DISCORD_TOKENが未設定です。Renderの管理画面または.envで確認してください。');
-    process.exit(1);
-  }
-  try {
-    console.log("🚨 ABOUT TO LOGIN DISCORD");
-    await client.login(CONFIG.DISCORD_TOKEN);
-    console.log("🚀 client.login() resolved");
-  } catch (err) {
-    console.error('❌ ログイン失敗:', err);
-    process.exit(1);
-  }
 });
 
 // ===== 2. 設定 =====
@@ -221,40 +200,18 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // callGasApiに関数引数を追加できるように修正
-// ===== 4. GAS API 通信 (デバッグログ強化版) =====
 async function callGasApi(action, params = {}, signal = null) {
-  const startTime = Date.now(); // 実行時間の計測用
   try {
     const url = new URL(CONFIG.GAS_API_URL);
     url.searchParams.append('action', action);
     Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
     
-    // --- ログ追加 ---
-    console.log(`📡 [${action}] GASリクエスト送信中...`);
-    console.log(`🔗 URL: ${url.origin}${url.pathname}?action=${action}`); // セキュリティのためパラメータは最小限表示
-
-    // Node.jsの標準fetchを使用
     const response = await fetch(url.toString(), { signal });
-    
-    const duration = (Date.now() - startTime) / 1000;
-    console.log(`📥 [${action}] GASレスポンス受信: Status ${response.status} (${duration}秒経過)`);
-
-    if (!response.ok) {
-      throw new Error(`HTTPエラー ステータス: ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log(`✅ [${action}] データ解析成功`);
-    return data;
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
   } catch (error) {
-    const duration = (Date.now() - startTime) / 1000;
-    
-    if (error.name === 'AbortError') {
-      console.error(`⚠️ [${action}] タイムアウトにより中断 (${duration}秒)`);
-      throw error;
-    }
-    
-    console.error(`❌ [${action}] GAS通信エラー (${duration}秒経過):`, error.message);
+    if (error.name === 'AbortError') throw error; // タイムアウト時はそのまま投げる
+    console.error(`❌ GAS通信エラー (${action}):`, error.message);
     return { success: false, error: error.message };
   }
 }
